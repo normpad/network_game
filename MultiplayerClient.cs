@@ -43,6 +43,11 @@ public class MultiplayerClient : MonoBehaviour
         }
     }
 
+    void OnDestroy()
+    {
+        serverSocket.Close();
+    }
+
     Socket ConnectSocket(string server, int port)
     {
         Socket s = null;
