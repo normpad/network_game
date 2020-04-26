@@ -4,6 +4,9 @@ using System.Net.Sockets;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Collections.Specialized;
+using System.Threading;
+using System.Runtime.InteropServices;
 
 public class MultiplayerClient : MonoBehaviour
 {
@@ -19,17 +22,20 @@ public class MultiplayerClient : MonoBehaviour
     static int port;
 
     static Dictionary<byte, Vector3> networkClientPositions;
+    static Dictionary<byte, Vector3> networkClientRotations;
+    static Mutex mut = new Mutex();
 
     // Start is called before the first frame update
     void Start()
     {
-        host = "127.0.0.1";
+        host = "138.88.148.113";
         port = 12345;
         clientNumber = 255;
 
         serverSocket = ConnectSocket(host, port);
 
         networkClientPositions = new Dictionary<byte, Vector3>();
+        networkClientRotations = new Dictionary<byte, Vector3>();
     }
 
     // Update is called once per frame
@@ -37,10 +43,19 @@ public class MultiplayerClient : MonoBehaviour
     {
         SocketSendReceive();
 
-        foreach(var netClient in networkClientPositions)
+        mut.WaitOne();
+        foreach (var netClient in networkClientPositions)
         {
-            netWorkPlayer1.SetPositionAndRotation(netClient.Value, new Quaternion());
+            Vector3 rot = new Vector3();
+            if (networkClientRotations.ContainsKey(netClient.Key))
+            {
+                print("This dude has location and rotation!");
+                rot = networkClientRotations[netClient.Key];
+            }
+            netWorkPlayer1.position = netClient.Value;
+            netWorkPlayer1.eulerAngles = rot;
         }
+        mut.ReleaseMutex();
     }
 
     void OnDestroy()
@@ -77,19 +92,28 @@ public class MultiplayerClient : MonoBehaviour
 
         if (clientNumber != 255)
         {
-            ClientData sendData = new ClientData();
-            sendData.clientNumber = clientNumber;
-            sendData.dataType = PacketType.POSITION_UPDATE;
+            //Set up position data packets
+            ClientData positionData = new ClientData(PacketType.POSITION_UPDATE);
+            positionData.clientNumber = clientNumber;
+            positionData.xPos = localPlayer.position.x;
+            positionData.yPos = localPlayer.position.y;
+            positionData.zPos = localPlayer.position.z;
 
-            sendData.x = localPlayer.position.x;
-            sendData.y = localPlayer.position.y;
-            sendData.z = localPlayer.position.z;
+            //Set up rotation data packets
+            ClientData rotationData = new ClientData(PacketType.ROTATION_UPDATE);
+            rotationData.clientNumber = clientNumber;
+            rotationData.xRot = localPlayer.rotation.eulerAngles.x;
+            rotationData.yRot = localPlayer.rotation.eulerAngles.y;
+            rotationData.zRot = localPlayer.rotation.eulerAngles.z;
 
             // Create a socket connection with the specified server and port.
             try
             {
-                // Send request to the server.
-                serverSocket.Send(sendData.raw, sendData.raw.Length, 0);
+                // Send position to server
+                serverSocket.Send(positionData.raw, positionData.raw.Length, 0);
+
+                // Send rotation to server
+                serverSocket.Send(rotationData.raw, rotationData.raw.Length, 0);
             }
             catch (Exception e)
             {
@@ -127,8 +151,24 @@ public class MultiplayerClient : MonoBehaviour
 
                     if (clientNum != clientNumber)
                     {
-                        Vector3 pos = new Vector3(dataReceived.x, dataReceived.y, dataReceived.z);
+                        Vector3 pos = new Vector3(dataReceived.xPos, dataReceived.yPos, dataReceived.zPos);
+                        mut.WaitOne();
                         networkClientPositions[clientNum] = pos;
+                        mut.ReleaseMutex();
+                    }
+                }
+                else if (dataReceived.dataType == PacketType.ROTATION_UPDATE)
+                {
+                    print("Got client rotation!");
+                    byte clientNum = dataReceived.clientNumber;
+
+                    if(clientNum != clientNumber)
+                    {
+                        Vector3 rot = new Vector3(dataReceived.xRot, dataReceived.yRot, dataReceived.zRot);
+                        print(rot);
+                        mut.WaitOne();
+                        networkClientRotations[clientNum] = rot;
+                        mut.ReleaseMutex();
                     }
                 }
             }
